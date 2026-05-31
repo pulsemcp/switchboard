@@ -4,7 +4,7 @@ Free, self-hostable open-source software that saves agent transcripts from Claud
 
 ## Project Status
 
-Switchboard is **greenfield**. The repository currently contains only this file and a README — no application code, build system, or tests have landed yet. The sections below describe intended scope and conventions; flesh them out (stack, folder hierarchy, build/test/run commands) as real code is added, and keep this file in sync with the codebase as it takes shape.
+Switchboard is at an early, pre-implementation stage. The repository holds only this file, an `AGENTS.md`, and a `README` — there is no application code, build system, or test suite. The sections below describe intended scope and conventions; expand them with concrete detail (stack, folder hierarchy, build/test/run commands) once the codebase grows, and keep this file aligned with the code.
 
 ## What Switchboard Does
 
@@ -32,13 +32,13 @@ Agent transcripts can contain source code, secrets, and proprietary context. Kee
 
 ## Development
 
-No build system, dependencies, or tests exist in the repository yet. When the first implementation lands, document here:
+The repository has no build system, dependencies, or tests. Once the first implementation lands, document here:
 
 - The language/runtime and how to install dependencies
 - How to build, run, and self-host the service locally
 - How to run the test suite (and which tests to run for targeted changes)
 
-Until then, changes are documentation- or scaffolding-only.
+Until code exists, changes are documentation- or scaffolding-only.
 
 ## Contributing
 
