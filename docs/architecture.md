@@ -4,12 +4,16 @@
 > pithy — diagrams and data-model notes over prose. The _why_ behind these choices
 > lives in [philosophy.md](./philosophy.md).
 
-Switchboard ingests coding-agent transcripts (Claude Code, Codex, …), normalizes
-them into one versioned format, and analyzes them so an org can see how its agents
-are used — skills, MCP tool calls, cost — and ultimately swap models/harnesses to
-cut token spend.
+Switchboard ingests coding-agent transcripts (Claude Code, Codex, …), standardizes
+them into one versioned canonical format (the **OpenTranscripts spec**), and
+analyzes them so an org can see how its agents are used — skills, MCP tool calls,
+cost — and ultimately swap models/harnesses to cut token spend.
 
 ## System
+
+The data moves through four stages, with one hard determinism boundary in the
+middle: **raw → OpenTranscript is a deterministic ETL; OpenTranscript → segments →
+outcomes are LLM-driven.**
 
 ```mermaid
 flowchart LR
@@ -18,117 +22,131 @@ flowchart LR
   cc -->|hook| store
   cx -->|hook| store
   store[("Object store: S3 / GCS / local")]
-  store -->|ingest worker| norm["Normalize (versioned parser)"]
+  store -->|ingest| raw
 
   subgraph pg[Postgres]
     raw[(raw_transcripts)]
-    ana[(analyses)]
+    open[(open_transcripts)]
     seg[(segments)]
+    out[(outcomes)]
   end
 
-  norm --> raw
-  raw -->|deterministic parsers| seg
-  raw -->|"LLM analyzers (v2)"| seg
-  seg --> roll["Rollups / views"]
-  ana -.-> seg
+  raw -->|"deterministic ETL"| open
+  open -->|"LLM segmentation"| seg
+  seg -->|"LLM scoring"| out
+  open --> roll["Deterministic rollups / views"]
   roll --> dash["Admin dashboard"]
-  roll --> api["REST + MCP API (v2)"]
+  seg --> api["REST + MCP API (v2)"]
+  out --> api
 ```
 
 - **Hook** — a separately distributed package that pipes each agent session to an
   object store the user controls. It's the wedge; we never own the ingestion edge.
   Destinations (S3 / GCS / local FS / HTTP) sit behind one interface.
-- **Ingest + normalize** — a worker pulls raw blobs and runs the
-  source-appropriate, independently versioned parser to produce a standardized
-  transcript. New agent → new parser; format change → version bump.
-- **Analyze** — analyzers read normalized transcripts and emit **segments**
-  (labeled chunks: skill invocation, tool call, MCP tool call, error, …).
-  Deterministic parsers and LLM analyzers share one schema; the MVP ships
-  deterministic-only and makes **no LLM calls**.
-- **Serve** — rollup tables/views feed the admin dashboard (MVP) and a REST + MCP
-  API (v2). At our scale (100s–1000s/day) **Postgres is the queue** (`FOR UPDATE
-  SKIP LOCKED`): no Kafka, Redis, or external orchestrator.
+- **Ingest (raw)** — a worker pulls raw blobs into `raw_transcripts` as a faithful,
+  uninterpreted capture of the source. This is plain ETL: provenance in, source
+  bytes preserved, nothing analyzed.
+- **Standardize (OpenTranscripts)** — a **deterministic**, source-appropriate,
+  independently versioned converter translates each raw transcript into the
+  canonical **OpenTranscripts** format, computing declared fields like total tokens
+  and cost. New agent → new converter; spec change → version bump.
+- **Segment then score (LLM-driven)** — segmentation reads an OpenTranscript and
+  emits **segments** (labeled spans); scoring reads segments and emits **outcomes**.
+  Both steps are LLM-driven (or externally posted) and land in v2; the MVP makes
+  **no LLM calls**.
+- **Serve** — deterministic rollups/views over `open_transcripts` feed the admin
+  dashboard (MVP); segments and outcomes feed a REST + MCP API (v2). At our scale
+  (100s–1000s/day) **Postgres is the queue** (`FOR UPDATE SKIP LOCKED`): no Kafka,
+  Redis, or external orchestrator.
 
 ## Data model
 
 ```mermaid
 erDiagram
-  SOURCES        ||--o{ RAW_TRANSCRIPTS : produces
-  RAW_TRANSCRIPTS ||--o{ ANALYSES       : "analyzed by"
-  ANALYZERS      ||--o{ ANALYSES        : runs
-  ANALYSES       ||--o{ SEGMENTS        : emits
-  RAW_TRANSCRIPTS ||--o{ SEGMENTS       : "located in"
-  RAW_TRANSCRIPTS ||--o{ OUTCOMES       : "scored by"
+  SOURCES          ||--o{ RAW_TRANSCRIPTS  : produces
+  RAW_TRANSCRIPTS  ||--o{ OPEN_TRANSCRIPTS : "ETL (deterministic)"
+  OPEN_TRANSCRIPTS ||--o{ SEGMENTS         : "segmented into (LLM)"
+  SEGMENTS         ||--o{ OUTCOMES         : "scored by (LLM)"
 
   SOURCES {
     uuid id
-    text kind          "claude_code | codex | ..."
-    text ingress       "s3 | gcs | local | http"
+    text kind             "claude_code | codex | ..."
+    text ingress          "s3 | gcs | local | http"
     jsonb config
   }
   RAW_TRANSCRIPTS {
     uuid id
     uuid source_id
-    text external_ref  "blob uri, unique per source"
-    text normalizer_version
+    text external_ref     "blob uri, unique per source"
+    jsonb payload         "raw source dump, as captured"
+    timestamptz ingested_at
+  }
+  OPEN_TRANSCRIPTS {
+    uuid id
+    uuid raw_transcript_id
+    text spec_version     "OpenTranscripts spec version"
+    text converter_version "deterministic ETL that produced it"
     text harness
     text model
     text root_hash
     timestamptz started_at
+    timestamptz ended_at
     int  total_tokens
     numeric cost_usd
-    jsonb normalized   "validated against schema"
-  }
-  ANALYZERS {
-    uuid id
-    text name
-    text version
-    text kind          "deterministic | llm"
-    text model
-    text prompt
-    jsonb output_schema
-  }
-  ANALYSES {
-    uuid id
-    uuid transcript_id
-    text analyzer_version
-    text prompt_hash
-    text model
-    timestamptz analyzed_at
+    jsonb document        "canonical doc, validated vs spec"
   }
   SEGMENTS {
     uuid id
-    uuid transcript_id
-    uuid analysis_id
-    text kind          "skill_invocation | tool_call | ..."
+    uuid open_transcript_id
+    text kind             "phase | subtask | skill | ..."
     text label
+    int  start_index
+    int  end_index
     numeric score
     jsonb attributes
+    text source           "llm | external_post"
+    text producer         "segmenter name + version"
+    text model            "null when not LLM"
+    text prompt_hash
+    timestamptz created_at
   }
   OUTCOMES {
     uuid id
-    uuid transcript_id
-    text source
+    uuid segment_id
+    text kind
     jsonb data
+    text source           "llm | external_post"
+    text producer         "scorer name + version"
+    text model
+    text prompt_hash
+    timestamptz created_at
   }
 ```
 
 Notes that matter more than the columns:
 
-- **The normalized schema is the contract.** `raw_transcripts.normalized` is
-  **versioned, published as a JSON Schema, and validated on write** so third
-  parties can write their own parsers. Analysis _dimensions_ (model, harness, root
-  hash, timing, cost, tokens) are **promoted to indexable columns**, not buried in
-  JSON.
-- **Analysis is append-only and version-tagged.** A uniqueness constraint on
-  `(transcript_id, analyzer_version, prompt_hash, model)` makes re-runs idempotent
-  (`ON CONFLICT DO NOTHING`) and turns any prompt/version change into _new_ rows
-  beside the old — free A/B comparison and a full audit trail. We never overwrite.
-- **`segments` is one shared table** for deterministic parsers (MVP) and external
-  posters (v2). It powers the skills leaderboard, MCP tool analysis, and cost
-  views with the same shape.
-- **`sources` and `analyzers` are data, not code** — changing a prompt or adding a
-  source never requires a redeploy.
+- **`raw_transcripts` is deliberately minimal** — a faithful, uninterpreted ETL
+  capture of the source (provenance + original payload), nothing analyzed. It is the
+  immutable source of truth; everything downstream is regenerated from it.
+- **The OpenTranscripts spec is the contract.** `open_transcripts.document` is
+  **versioned, published as a JSON Schema, and validated on write** so third parties
+  can target one canonical format. The dimensions we slice by (model, harness, root
+  hash, timing, tokens, cost) are **promoted to indexable columns**, not buried in
+  JSON. Raw → OpenTranscript is fully deterministic, tagged with `converter_version`.
+- **Outcomes attach to segments, never to transcripts.** An outcome is always a
+  judgment about a specific segment; per-transcript views roll up from there.
+- **No separate `analyzers` / `analyses` tables.** Because segmentation and scoring
+  are the only LLM steps and share one shape, provenance lives _inline_ on
+  `segments` and `outcomes`: `source` (llm vs externally posted), `producer`
+  (name + version), `model`, and `prompt_hash`. This keeps analysis append-only and
+  version-tagged — a uniqueness constraint over `(parent_id, producer, prompt_hash,
+  model, kind)` makes re-runs idempotent (`ON CONFLICT DO NOTHING`) and turns any
+  prompt/version change into _new_ rows beside the old (free A/B, full audit) — and
+  lets external systems POST through the same columns.
+- **Deterministic insights come from `open_transcripts` directly.** The skills
+  leaderboard, MCP tool-call analysis, and cost views are rollups/views over the
+  canonical document — no LLM. Segments and outcomes are the LLM-driven layer above.
+- **`sources` is data, not code** — adding a source never requires a redeploy.
 - A lightweight `pipeline_runs` table records lineage (who ran, what version, how
   many processed, errors).
 
@@ -137,17 +155,20 @@ Notes that matter more than the columns:
 ```mermaid
 stateDiagram-v2
   [*] --> Captured: hook writes blob
-  Captured --> Normalized: ingest (normalizer vN)
-  Normalized --> Segmented: parsers / analyzers (vM)
-  Segmented --> Rolled: rollups / views
-  Rolled --> [*]
-  Normalized --> Normalized: re-normalize on schema bump
-  Segmented --> Segmented: re-analyze on version / prompt bump
+  Captured --> Standardized: deterministic ETL to OpenTranscript (spec vN)
+  Standardized --> Segmented: LLM segmentation (vM)
+  Segmented --> Scored: LLM outcomes (vK)
+  Scored --> [*]
+  Standardized --> Standardized: re-run ETL on spec bump
+  Segmented --> Segmented: re-segment on prompt / version change
+  Scored --> Scored: re-score on prompt / version change
 ```
 
-Store the raw normalized JSON forever; **migrate forward to the latest schema on
-read.** Old schema versions exist only to decode historical rows; new writes always
-use the latest. Re-runs (the self-loops above) are the universal upgrade mechanism.
+`raw_transcripts` is kept forever as the immutable source of truth; the
+OpenTranscript is **regenerated deterministically** whenever the spec bumps, and
+segments/outcomes are re-derived when a prompt or version changes. Re-runs (the
+self-loops above) are the universal upgrade mechanism — append new version-tagged
+rows, never overwrite.
 
 ## Stack
 
@@ -193,11 +214,12 @@ release) and env/DB. (Why, and how internal-only features stay out of a fork:
 
 ## Roadmap
 
-- **MVP** — hook + ingestor + deterministic parsers; admin dashboard (transcript
-  list filterable by user/date/harness/model, single-transcript view, skills
-  leaderboard, MCP tool analysis, cost views). No LLM calls.
-- **v2** — REST + MCP API; externally-posted segments/analyses (BYOK or posted from
-  another system); outcome data with per-model / per-root / per-harness /
+- **MVP** — hook + ingestor + deterministic raw → OpenTranscripts ETL; admin
+  dashboard (transcript list filterable by user/date/harness/model,
+  single-transcript view, skills leaderboard, MCP tool analysis, cost views) built
+  as rollups over `open_transcripts`. No LLM calls.
+- **v2** — REST + MCP API; LLM-driven (or externally posted) segments and outcomes
+  (BYOK or posted from another system); per-model / per-root / per-harness /
   per-period breakdowns for config experiments.
 - **v3** — a recommendations engine, with deeper internal-system integration
   ("Enterprise"), built behind the extension seam planned for now.

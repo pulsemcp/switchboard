@@ -17,24 +17,28 @@ The hook sends transcripts to storage the user owns; Switchboard analyzes whatev
 lands there. We never own the ingestion edge. This is a trust win for self-hosters
 and keeps our release cycle decoupled from theirs.
 
-## The normalized schema is sacred
+## The OpenTranscripts spec is sacred
 
-The standardized transcript format is the contract every other part of the system —
-and every third-party parser — depends on. It is versioned, published as a JSON
-Schema, and validated on write. Getting it right is cheap today and ruinously
+The canonical standardized format — the **OpenTranscripts spec** — is the contract
+every other part of the system, and every third-party tool, depends on. It is
+versioned, published as a JSON Schema, and validated on write. Raw transcripts stay
+a faithful, uninterpreted capture; the spec is where we declare canonical fields
+(total tokens, cost, timing). Getting it right is cheap today and ruinously
 expensive to fix in a year, so it gets disproportionate care.
 
 ## Append-only, never overwrite
 
 Analysis results are versioned and additive. Re-running is idempotent; changing a
-prompt or analyzer version produces new rows beside the old ones. Storage is cheap;
-the audit trail and free A/B comparison of prompt versions are worth far more than
-the bytes. We never destroy the evidence of how a number was produced.
+prompt or producer version produces new rows beside the old ones. Provenance
+(source, producer, model, prompt hash) rides inline on each segment and outcome.
+Storage is cheap; the audit trail and free A/B comparison of prompt versions are
+worth far more than the bytes. We never destroy the evidence of how a number was
+produced.
 
 ## Configuration over redeployment
 
-Sources, analyzers, prompts, and feature flags are *data and env vars*, not
-hardcoded constants. A self-hoster (or we ourselves) should change behavior without
+Sources, segmenters/scorers, prompts, models, and feature flags are *data and env
+vars*, not hardcoded constants. A self-hoster (or we ourselves) should change behavior without
 editing code and shipping a container. This is the single most important move for
 the self-host experience.
 
