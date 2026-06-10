@@ -117,7 +117,7 @@ erDiagram
     jsonb data
     text source           "llm | external_post"
     text producer         "scorer name + version"
-    text model
+    text model            "null when not LLM"
     text prompt_hash
     timestamptz created_at
   }
@@ -140,7 +140,8 @@ Notes that matter more than the columns:
   `segments` and `outcomes`: `source` (llm vs externally posted), `producer`
   (name + version), `model`, and `prompt_hash`. This keeps analysis append-only and
   version-tagged — a uniqueness constraint over `(parent_id, producer, prompt_hash,
-  model, kind)` makes re-runs idempotent (`ON CONFLICT DO NOTHING`) and turns any
+  model, kind)` (where `parent_id` is `open_transcript_id` for segments and
+  `segment_id` for outcomes) makes re-runs idempotent (`ON CONFLICT DO NOTHING`) and turns any
   prompt/version change into _new_ rows beside the old (free A/B, full audit) — and
   lets external systems POST through the same columns.
 - **Deterministic insights come from `open_transcripts` directly.** The skills

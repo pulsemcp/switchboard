@@ -38,9 +38,9 @@ produced.
 ## Configuration over redeployment
 
 Sources, segmenters/scorers, prompts, models, and feature flags are *data and env
-vars*, not hardcoded constants. A self-hoster (or we ourselves) should change behavior without
-editing code and shipping a container. This is the single most important move for
-the self-host experience.
+vars*, not hardcoded constants. A self-hoster — or we ourselves — should be able to
+change behavior without editing code and shipping a container. This is the single
+most important move for the self-host experience.
 
 ## Design for the next version, pay for this one
 
