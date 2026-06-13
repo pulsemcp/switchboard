@@ -4,7 +4,32 @@ Free, self-hostable open-source software that saves agent transcripts from Claud
 
 ## Project Status
 
-Switchboard is at an early, pre-implementation stage. The repository holds only this file, an `AGENTS.md`, and a `README` — there is no application code, build system, or test suite. The sections below describe intended scope and conventions; expand them with concrete detail (stack, folder hierarchy, build/test/run commands) once the codebase grows, and keep this file aligned with the code.
+Switchboard is at an early, pre-implementation stage. The repository holds agent instructions (`AGENTS.md` / `CLAUDE.md`), a `README`, and the design docs under `docs/` — there is no application code, build system, or test suite yet. The sections below describe intended scope and conventions; expand them with concrete detail (stack, folder hierarchy, build/test/run commands) once the codebase grows, and keep this file aligned with the code.
+
+## Repository Layout
+
+```
+.
+├── AGENTS.md          # this file — agent instructions (mission, principles, conventions)
+├── CLAUDE.md          # identical copy of AGENTS.md for Claude Code
+├── README.md          # human-facing intro + pointer to docs/
+└── docs/
+    ├── architecture.md  # canonical architecture reference (diagrams + data model) — start here
+    └── philosophy.md    # the "why" behind the architecture; tiebreakers for ambiguous calls
+```
+
+## Architecture at a Glance
+
+The full reference is [docs/architecture.md](./docs/architecture.md); the load-bearing one-liners:
+
+- **Four-stage pipeline:** `raw_transcripts` → `open_transcripts` → `segments` → `outcomes`.
+- **One determinism boundary:** raw → OpenTranscript is a deterministic, versioned ETL; OpenTranscript → segments → outcomes are LLM-driven (and land in v2 — the MVP makes no LLM calls).
+- **The OpenTranscripts spec is the contract:** one versioned, JSON-Schema-validated canonical format every other part and every third-party tool targets.
+- **Sources are data, not code:** a source is an S3-compatible `storage_uri` plus an `adapter` that reads it and writes `raw_transcripts`. Amazon S3 ships built-in; other shapes get a custom adapter. `raw_transcripts` keeps the payload verbatim plus promoted sidecar columns (harness + version, model, actor, trigger, tokens, cost).
+- **Append-only analysis:** segments/outcomes are version-tagged and idempotent; outcomes attach to segments, never transcripts; provenance rides inline (no separate analyzers tables).
+- **Postgres is the only required dependency** — and the job queue (`FOR UPDATE SKIP LOCKED`): no Redis, Kafka, or external orchestrator.
+- **One Docker image** (Next.js web + graphile-worker), migrations on boot, full-stack TypeScript with Effect in the engine.
+- **Auth starts admin-only** (env-var password + scoped service tokens); SSO + role-based access are the planned trajectory, not the end state.
 
 ## What Switchboard Does
 

@@ -1,0 +1,21 @@
+# Agent Orchestrator runtime resources (injected per session, not source)
+.claude/
+.mcp.json
+
+# Caches, logs, and dependencies
+.npm-cache/
+node_modules/
+*.log
+
+# Build output
+dist/
+build/
+.next/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS cruft
+.DS_Store
